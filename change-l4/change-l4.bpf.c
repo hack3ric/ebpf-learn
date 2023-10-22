@@ -34,14 +34,14 @@ static inline int handle_ipv4(struct iphdr* ipv4, void** nhptr, struct __sk_buff
 
   __u16 l4_len = bpf_ntohs(ipv4->tot_len) - (ipv4->ihl << 2);
   __bpf_printk("l4_len = %d", l4_len);
-  __be16 sport = bpf_htons(11451);
-  __be16 dport = bpf_htons(41919);
+  __u16 sport = 11451;
+  __u16 dport = 41919;
 
   // Change L4 header from ICMP to UDP
   *nhptr -= sizeof(struct icmphdr);
   shift_ptr_decl(struct udphdr, udp, *nhptr, skb);
-  udp->source = sport;
-  udp->dest = dport;
+  udp->source = bpf_htons(sport);
+  udp->dest = bpf_htons(dport);
   udp->len = bpf_htons(l4_len);
   udp->check = 0;
 
