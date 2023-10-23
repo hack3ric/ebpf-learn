@@ -11,6 +11,12 @@
 #include <bpf/bpf_endian.h>
 #include <bpf/bpf_helpers.h>
 
+#define ETH_END (ETH_HLEN)
+#define IPV4_END (ETH_END + sizeof(struct iphdr))
+#define IPV6_END (ETH_END + sizeof(struct ipv6hdr))
+#define IPV4_UDP_END (IPV4_END + sizeof(struct udphdr))
+#define IPV6_UDP_END (IPV6_END + sizeof(struct udphdr))
+
 #define check_decl(type, name, off, skb, ret)                           \
   type* name = ({                                                       \
     type* ptr = (void*)(size_t)skb->data + off;                         \
@@ -21,11 +27,11 @@
 #define check_decl_unspec(type, name, off, skb) \
   check_decl(type, name, off, skb, TC_ACT_UNSPEC)
 
-#define ETH_END (ETH_HLEN)
-#define IPV4_END (ETH_END + sizeof(struct iphdr))
-#define IPV6_END (ETH_END + sizeof(struct ipv6hdr))
-#define IPV4_UDP_END (IPV4_END + sizeof(struct udphdr))
-#define IPV6_UDP_END (IPV6_END + sizeof(struct udphdr))
+#define try(x)                  \
+  ({                            \
+    int result = x;             \
+    if (!result) return result; \
+  })
 
 static void update_csum(__u16* csum, __s32 delta) {
   __u32 new_csum = (__u16) ~*csum + delta;
@@ -73,7 +79,8 @@ static void update_csum_data(struct __sk_buff* skb, __u16* csum, __u32 off) {
   }
 }
 
-static int handle_ipv4(struct __sk_buff* skb, struct iphdr* ipv4) {
+static int handle_ipv4(struct __sk_buff* skb) {
+  check_decl_unspec(struct iphdr, ipv4, ETH_END, skb);
   if (ipv4->protocol != IPPROTO_ICMP) return TC_ACT_OK;
   check_decl_unspec(struct icmphdr, icmp, IPV4_END, skb);
 
@@ -105,7 +112,8 @@ static int handle_ipv4(struct __sk_buff* skb, struct iphdr* ipv4) {
   return TC_ACT_OK;
 }
 
-static int handle_ipv6(struct __sk_buff* skb, struct ipv6hdr* ipv6) {
+static int handle_ipv6(struct __sk_buff* skb) {
+  check_decl_unspec(struct ipv6hdr, ipv6, ETH_END, skb);
   if (ipv6->nexthdr != IPPROTO_ICMPV6) return TC_ACT_OK;
   check_decl_unspec(struct icmp6hdr, icmpv6, IPV6_END, skb);
 
@@ -138,20 +146,12 @@ SEC("classifier")
 int change_l4(struct __sk_buff* skb) {
   check_decl_unspec(struct ethhdr, eth, 0, skb);
   switch (bpf_ntohs(eth->h_proto)) {
-    case 0x0800: /* IPv4 */ {
-      check_decl_unspec(struct iphdr, ipv4, ETH_END, skb);
-      int result = handle_ipv4(skb, ipv4);
-      if (!result) return result;
+    case ETH_P_IP:
+      try(handle_ipv4(skb));
       break;
-    }
-    case 0x86dd: /* IPv6 */ {
-      check_decl_unspec(struct ipv6hdr, ipv6, ETH_END, skb);
-      int result = handle_ipv6(skb, ipv6);
-      if (!result) return result;
+    case ETH_P_IPV6:
+      try(handle_ipv6(skb));
       break;
-    }
-    default:  // We don't know about/process this packet
-      return TC_ACT_OK;
   }
   return TC_ACT_OK;
 }
